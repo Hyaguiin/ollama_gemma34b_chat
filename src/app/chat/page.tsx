@@ -2,39 +2,85 @@
 
 import { useEffect, useRef, useState } from 'react';
 import styles from './chat.module.scss';
-const api = process.env.NEXT_PUBLIC_WS_API;
-if (!api) {
+
+const wsUrl = process.env.NEXT_PUBLIC_WS_API;
+console.log(`varenv: ${wsUrl}`)
+
+if (!wsUrl) {
   throw new Error('Variável de ambiente NEXT_PUBLIC_WS_API não está definida');
 }
 
 const ChatWithVoice = () => {
   const [messages, setMessages] = useState<{ sender: 'user' | 'bot'; text: string }[]>([]);
   const [listening, setListening] = useState(false);
+  const [socket, setSocket] = useState<WebSocket | null>(null);
   const recognitionRef = useRef<SpeechRecognition | null>(null);
   const synth = typeof window !== 'undefined' ? window.speechSynthesis : null;
+// Inicializa o WebSocket quando o componente monta
+useEffect(() => {
+  const ws = new WebSocket(wsUrl.replace(/^http/, 'ws'));
+  setSocket(ws);
+
+  return () => {
+    ws.close();
+  };
+}, []);
+
+ useEffect(() => {
+  if (!socket) return;
+
+  socket.onmessage = (event) => {
+    try {
+      const data = JSON.parse(event.data);
+
+      if (data.error) {
+        console.error('Erro do servidor:', data.error);
+        return;
+      }
+
+      const { sender, text } = data;
+
+      setMessages((prev) => [...prev, { sender, text }]);
+
+      if (synth && sender === 'bot') {
+        const utterance = new SpeechSynthesisUtterance(text);
+        synth.speak(utterance);
+      }
+    } catch {
+      // Caso mensagem não seja JSON, tratar como string simples
+      let text = event.data as string;
+      if (text.startsWith('Cali_Bot:')) {
+        text = text.replace('Cali_Bot: ', '');
+      }
+
+      setMessages((prev) => [...prev, { sender: 'bot', text }]);
+
+      if (synth) {
+        const utterance = new SpeechSynthesisUtterance(text);
+        synth.speak(utterance);
+      }
+    }
+  };
+
+  socket.onerror = (err) => {
+    console.error('WebSocket error:', err);
+  };
+
+  return () => {
+    socket.close();
+  };
+}, [socket]);
+
 
   const handleSendMessage = async (text: string) => {
     if (!text.trim()) return;
 
     setMessages((prev) => [...prev, { sender: 'user', text }]);
 
-    try {
-      const res = await fetch(api, {
-        method: 'POST',
-        body: JSON.stringify({ message: text }),
-        headers: { 'Content-Type': 'application/json' },
-      });
-
-      const data = await res.json();
-
-      setMessages((prev) => [...prev, { sender: 'bot', text: data.response }]);
-
-      if (synth) {
-        const utterance = new SpeechSynthesisUtterance(data.response);
-        synth.speak(utterance);
-      }
-    } catch (err) {
-      console.error('Erro ao buscar resposta:', err);
+    if (socket && socket.readyState === WebSocket.OPEN) {
+      socket.send(text);
+    } else {
+      console.error('WebSocket não está conectado.');
     }
   };
 
@@ -61,7 +107,7 @@ const ChatWithVoice = () => {
 
   return (
     <div className={styles.container}>
-      <h1 className={styles.title}>Chat com Voz 🤖🎙️</h1>
+      <h1 className={styles.title}>CaliBot</h1>
 
       <div className={styles.chatBox}>
         {messages.map((msg, idx) => (
@@ -69,7 +115,7 @@ const ChatWithVoice = () => {
             key={idx}
             className={`${styles.message} ${msg.sender === 'user' ? styles.user : styles.bot}`}
           >
-            <strong>{msg.sender === 'user' ? 'Você' : 'Bot'}:</strong> {msg.text}
+            <strong>{msg.sender === 'user' ? 'Você' : 'CaliBot'}:</strong> {msg.text}
           </div>
         ))}
       </div>
